@@ -17,7 +17,9 @@ SECRET_PATTERNS = (
     ("RT100", "high", "Generic API secret exposed", re.compile(r"(?i)\b(?:api[_-]?key|secret[_-]?key|access[_-]?token)\b\s*[:=]\s*['\"]([A-Za-z0-9_./+\-=]{16,})['\"]")),
 )
 SAFE_EXAMPLE_MARKERS = ("example", "sample", "placeholder", "your_", "changeme", "dummy", "test")
-SCAN_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".json", ".yml", ".yaml", ".toml", ".env", ".ini", ".cfg", ".sh", ".ps1"}
+SCAN_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".kt", ".php", ".json", ".yml", ".yaml", ".toml", ".env", ".ini", ".cfg", ".sh", ".ps1"}
+TEST_MARKERS = ("test_", "_test.", ".test.", ".spec.")
+VENDOR_DIRS = {"vendor", "vendors", "third_party", "third-party", "bower_components"}
 
 
 def _read(path: Path) -> str:
@@ -35,6 +37,17 @@ def _relative(root: Path, path: Path) -> str:
 
 def _line(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
+
+
+def _is_test(root: Path, path: Path) -> bool:
+    relative = path.relative_to(root)
+    return any(part.lower() in {"test", "tests", "spec", "specs", "fixtures"} for part in relative.parts) or any(marker in path.name.lower() for marker in TEST_MARKERS)
+
+
+def _is_vendored(root: Path, path: Path) -> bool:
+    relative = path.relative_to(root)
+    parts = {part.lower() for part in relative.parts}
+    return bool(parts & VENDOR_DIRS) or path.name.lower().endswith((".min.js", ".bundle.js")) or "/static/js/libs/" in f"/{relative.as_posix().lower()}/"
 
 
 def _redact(value: str) -> str:
@@ -90,29 +103,68 @@ def _python_findings(root: Path, files: list[Path]) -> list[Finding]:
                 name = (node.func.value.id, node.func.attr)
             if name in dangerous:
                 rule, severity, title, fix = dangerous[name]
-                findings.append(Finding(rule, severity, title, f"Call to {'.'.join(name)} requires a trust-boundary review.", _relative(root, path), node.lineno, ".".join(name), fix))
+                effective_severity = "info" if _is_test(root, path) else severity
+                findings.append(Finding(rule, effective_severity, title, f"Call to {'.'.join(name)} requires a trust-boundary review.", _relative(root, path), node.lineno, ".".join(name), fix))
             if name in {("subprocess", "run"), ("subprocess", "Popen"), ("subprocess", "call")}:
                 shell_true = any(keyword.arg == "shell" and isinstance(keyword.value, ast.Constant) and keyword.value.value is True for keyword in node.keywords)
                 if shell_true:
-                    findings.append(Finding("RT112", "high", "Subprocess uses shell=True", "Shell parsing can turn untrusted text into command execution.", _relative(root, path), node.lineno, "shell=True", "Pass an argument list with shell=False and validate external input."))
+                    findings.append(Finding("RT112", "info" if _is_test(root, path) else "high", "Subprocess uses shell=True", "Shell parsing can turn untrusted text into command execution.", _relative(root, path), node.lineno, "shell=True", "Pass an argument list with shell=False and validate external input."))
     return findings[:30]
 
 
 def _javascript_findings(root: Path, files: list[Path]) -> list[Finding]:
     findings: list[Finding] = []
+    for path in files:
+        if path.suffix.lower() not in {".js", ".jsx", ".ts", ".tsx"} or _is_vendored(root, path):
+            continue
+        text = _read(path)
+        imports_shell = bool(re.search(r"(?:from\s+['\"](?:node:)?child_process['\"]|require\s*\(\s*['\"](?:node:)?child_process['\"]\s*\))", text))
+        patterns = [
+            ("RT110", "high", "Dynamic code execution", re.compile(r"\b(?:eval|Function)\s*\("), "Avoid runtime evaluation of strings."),
+            ("RT113", "medium", "TLS verification disabled", re.compile(r"NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['\"]?0"), "Restore certificate verification."),
+        ]
+        if imports_shell:
+            patterns.append(("RT112", "high", "Shell command execution", re.compile(r"(?<![.\w])(?:exec|execSync)\s*\(|(?:child_process|childProcess)\s*\.\s*(?:exec|execSync)\s*\(|require\s*\(\s*['\"](?:node:)?child_process['\"]\s*\)\s*\.\s*(?:exec|execSync)\s*\("), "Use spawn/execFile with an argument list and validate input."))
+        for rule, severity, title, pattern, fix in patterns:
+            for match in pattern.finditer(text):
+                findings.append(Finding(rule, "info" if _is_test(root, path) else severity, title, "Security-sensitive JavaScript construct requires review.", _relative(root, path), _line(text, match.start()), match.group(0), fix))
+    return findings[:30]
+
+
+def _java_findings(root: Path, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
     patterns = (
-        ("RT110", "high", "Dynamic code execution", re.compile(r"\b(?:eval|Function)\s*\("), "Avoid runtime evaluation of strings."),
-        ("RT112", "high", "Shell command execution", re.compile(r"\b(?:exec|execSync)\s*\("), "Use spawn/execFile with an argument list and validate input."),
-        ("RT113", "medium", "TLS verification disabled", re.compile(r"NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['\"]?0"), "Restore certificate verification."),
+        ("RT112", "high", "Shell command execution", re.compile(r"Runtime\s*\.\s*getRuntime\s*\(\s*\)\s*\.\s*exec\s*\(|new\s+ProcessBuilder\s*\("), "Use a fixed executable and validated argument list; never pass request data to a shell."),
+        ("RT111", "high", "Unsafe Java deserialization", re.compile(r"\bObjectInputStream\b|\.\s*readObject\s*\("), "Avoid native deserialization of untrusted objects; use a constrained data format."),
+        ("RT114", "medium", "Dynamic script evaluation", re.compile(r"\bScriptEngineManager\b|\.\s*eval\s*\("), "Do not evaluate user-controlled expressions or scripts."),
     )
     for path in files:
-        if path.suffix.lower() not in {".js", ".jsx", ".ts", ".tsx"}:
+        if path.suffix.lower() not in {".java", ".kt"} or _is_vendored(root, path):
             continue
         text = _read(path)
         for rule, severity, title, pattern, fix in patterns:
             for match in pattern.finditer(text):
-                findings.append(Finding(rule, severity, title, "Security-sensitive JavaScript construct requires review.", _relative(root, path), _line(text, match.start()), match.group(0), fix))
+                findings.append(Finding(rule, "info" if _is_test(root, path) else severity, title, "Security-sensitive Java construct requires review.", _relative(root, path), _line(text, match.start()), match.group(0)[:120], fix))
     return findings[:30]
+
+
+def _php_findings(root: Path, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    patterns = (
+        ("RT110", "high", "Dynamic code execution", re.compile(r"(?i)(?<![\w>])eval\s*\("), "Remove eval and dispatch only explicitly supported operations."),
+        ("RT112", "high", "Shell command execution", re.compile(r"(?i)(?<![\w>])(?:system|exec|shell_exec|passthru|popen|proc_open)\s*\("), "Use a fixed executable and validated arguments; do not pass request data to a shell."),
+        ("RT111", "high", "Unsafe PHP deserialization", re.compile(r"(?i)(?<![\w>])unserialize\s*\("), "Do not deserialize untrusted PHP objects; use JSON and an explicit schema."),
+        ("RT115", "high", "Request-controlled file inclusion", re.compile(r"(?is)\b(?:include|require)(?:_once)?\s*\(?\s*\$_(?:GET|POST|REQUEST|COOKIE)"), "Map user input to an allowlist of local templates instead of including a request value."),
+        ("RT116", "high", "Request data reaches SQL query", re.compile(r"(?is)(?:mysqli_query|->\s*query)\s*\([^;\n]{0,300}\$_(?:GET|POST|REQUEST|COOKIE)"), "Use prepared statements with bound parameters."),
+    )
+    for path in files:
+        if path.suffix.lower() != ".php" or _is_vendored(root, path):
+            continue
+        text = _read(path)
+        for rule, severity, title, pattern, fix in patterns:
+            for match in pattern.finditer(text):
+                findings.append(Finding(rule, "info" if _is_test(root, path) else severity, title, "Security-sensitive PHP construct requires review.", _relative(root, path), _line(text, match.start()), match.group(0)[:120], fix))
+    return findings[:40]
 
 
 def _dependency_findings(root: Path) -> list[Finding]:
@@ -166,5 +218,4 @@ def _obfuscation_findings(root: Path, files: list[Path]) -> list[Finding]:
 
 
 def security_findings(root: Path, files: list[Path]) -> list[Finding]:
-    return _secret_findings(root, files) + _python_findings(root, files) + _javascript_findings(root, files) + _dependency_findings(root) + _obfuscation_findings(root, files)
-
+    return _secret_findings(root, files) + _python_findings(root, files) + _javascript_findings(root, files) + _java_findings(root, files) + _php_findings(root, files) + _dependency_findings(root) + _obfuscation_findings(root, files)

@@ -13,8 +13,9 @@ from .security import security_findings
 
 
 IGNORED_DIRS = {".git", ".venv", "venv", "node_modules", "dist", "build", "coverage", ".next"}
-SOURCE_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".kt", ".rb"}
+SOURCE_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".kt", ".rb", ".php"}
 TEST_MARKERS = ("test_", "_test.", ".test.", ".spec.")
+VENDOR_DIRS = {"vendor", "vendors", "third_party", "third-party", "bower_components", "libs", "plugins"}
 
 
 def _load_config(root: Path, config_path: str | Path | None) -> tuple[dict, list[Finding]]:
@@ -98,11 +99,16 @@ def _read(path: Path) -> str:
         return ""
 
 
+def _is_vendored(root: Path, path: Path) -> bool:
+    relative = path.relative_to(root)
+    return bool({part.lower() for part in relative.parts} & VENDOR_DIRS) or path.name.lower().endswith((".min.js", ".bundle.js"))
+
+
 def _readme(root: Path) -> tuple[Path | None, str]:
-    for name in ("README.md", "README.rst", "README.txt", "readme.md"):
-        path = root / name
-        if path.is_file():
-            return path, _read(path)
+    preferred = {"readme.md": 0, "readme.rst": 1, "readme.txt": 2, "readme": 3}
+    candidates = [path for path in root.iterdir() if path.is_file() and path.name.lower() in preferred]
+    for path in sorted(candidates, key=lambda item: preferred[item.name.lower()]):
+        return path, _read(path)
     return None, ""
 
 
@@ -111,11 +117,14 @@ def _broken_local_links(root: Path, readme: Path, text: str) -> list[Finding]:
     pattern = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
     for match in pattern.finditer(text):
         raw = match.group(1).strip().split(maxsplit=1)[0].strip("<>\"'")
+        if "{" in raw or "}" in raw:
+            continue
         parsed = urlparse(raw)
         if parsed.scheme or raw.startswith(("#", "mailto:")):
             continue
         target_text = unquote(parsed.path)
-        target = (readme.parent / target_text).resolve()
+        # GitHub treats /path links as repository-root relative links.
+        target = ((root if target_text.startswith("/") else readme.parent) / target_text.lstrip("/")).resolve()
         try:
             target.relative_to(root.resolve())
         except ValueError:
@@ -189,7 +198,8 @@ def _placeholder_findings(root: Path, files: list[Path], production_claimed: boo
     ]
     limit = 12
     for path in files:
-        if path.suffix.lower() not in SOURCE_SUFFIXES or any(part in {"tests", "test", "examples"} for part in path.relative_to(root).parts):
+        relative = path.relative_to(root)
+        if path.suffix.lower() not in SOURCE_SUFFIXES or _is_vendored(root, path) or any(part in {"tests", "test", "examples", "_examples"} for part in relative.parts) or any(marker in path.name.lower() for marker in TEST_MARKERS):
             continue
         body = _read(path)
         if path.suffix.lower() == ".py":

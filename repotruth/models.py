@@ -31,7 +31,12 @@ class ScanResult:
 
     @property
     def score(self) -> int:
-        penalty = sum(SEVERITY_WEIGHT.get(item.severity, 3) for item in self.findings)
+        # Repeated instances of one rule are useful evidence, but should not let
+        # a single noisy pattern dominate the repository's entire score.
+        by_rule: dict[str, list[int]] = {}
+        for item in self.findings:
+            by_rule.setdefault(item.rule_id, []).append(SEVERITY_WEIGHT.get(item.severity, 3))
+        penalty = sum(min(sum(weights), max(weights) * 2) for weights in by_rule.values())
         return max(0, 100 - penalty)
 
     @property
@@ -47,4 +52,3 @@ class ScanResult:
             "facts": self.facts,
             "findings": [item.to_dict() for item in self.findings],
         }
-

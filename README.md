@@ -51,6 +51,9 @@ The web server listens on `127.0.0.1:8765` only. Remote scans accept public `htt
 | `RT111` | Potentially unsafe deserialization |
 | `RT112` | Shell execution or `shell=True` |
 | `RT113` | TLS certificate verification disabled |
+| `RT114` | Java dynamic script evaluation |
+| `RT115` | PHP request-controlled file inclusion |
+| `RT116` | PHP request data reaches a SQL query |
 | `RT120` | npm lifecycle code runs automatically during installation |
 | `RT121` | Floating or non-registry JavaScript dependency |
 | `RT122` | JavaScript dependency lockfile is missing |
@@ -126,7 +129,7 @@ repotruth . --online
 repotruth . --verify-runtime
 ```
 
-`--online` sends pinned package names and versions to the public OSV.dev API. `--verify-runtime` requires Docker and an already downloaded `python:3.13-alpine` or `node:22-alpine` image. The container has no network, mounts the repository read-only, uses a non-root user, and has CPU, memory, PID, time, and temporary-storage limits.
+`--online` sends pinned package names and versions from npm, Python, Go, Rust, and Composer lock data to the public OSV.dev API. `--verify-runtime` requires Docker and an already downloaded `python:3.13-alpine` or `node:22-alpine` image. The container has no network, mounts the repository read-only, uses a non-root user, and has CPU, memory, PID, time, and temporary-storage limits.
 
 ## Safe fixes and pull requests
 
@@ -168,7 +171,7 @@ The action produces `repotruth.sarif`, which can be uploaded to GitHub code scan
 
 RepoTruth does not decide whether a project is good. It asks a narrower, testable question: **can a reader find evidence for what the repository tells them to believe?**
 
-The score is intentionally explainable. High, medium, low, and informational findings subtract 18, 8, 3, and 1 points respectively. A clean scan means that the implemented rules found no mismatch; it is not a security certification.
+The score is intentionally explainable. High, medium, low, and informational findings subtract 18, 8, 3, and 1 points respectively. Repeated instances of one rule are capped at twice that rule's strongest finding weight, so one noisy pattern cannot dominate the entire score. A clean scan means that the implemented rules found no mismatch; it is not a security certification.
 
 ## Safety and limitations
 

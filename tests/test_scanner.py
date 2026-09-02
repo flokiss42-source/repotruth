@@ -13,7 +13,8 @@ from repotruth.scanner import scan_repository
 from repotruth.server import RepoTruthHandler, ScanError, github_clone_url
 from repotruth.fixes import apply_fixes, propose_fixes
 from repotruth.runtime import verify_runtime
-from repotruth.vulnerabilities import osv_findings
+from repotruth.security import _php_findings
+from repotruth.vulnerabilities import _packages, osv_findings
 
 
 class RepoTruthTests(unittest.TestCase):
@@ -29,6 +30,18 @@ class RepoTruthTests(unittest.TestCase):
     def test_missing_readme(self):
         result = scan_repository(self.make_repo({"app.py": "print('ok')"}))
         self.assertEqual([item.rule_id for item in result.findings], ["RT000"])
+
+    def test_readme_detection_is_case_insensitive(self):
+        result = scan_repository(self.make_repo({"Readme.md": "# Project"}))
+        self.assertNotIn("RT000", [item.rule_id for item in result.findings])
+
+    def test_root_relative_readme_link_stays_inside_repository(self):
+        root = self.make_repo({"README.md": "[Guide](/docs/guide.md)", "docs/guide.md": "# Guide"})
+        self.assertNotIn("RT001", [item.rule_id for item in scan_repository(root).findings])
+
+    def test_brace_template_link_does_not_become_a_truncated_path(self):
+        root = self.make_repo({"README.md": "[Config](config/application-{one, two}.properties)"})
+        self.assertNotIn("RT001", [item.rule_id for item in scan_repository(root).findings])
 
     def test_broken_link_and_python_command(self):
         root = self.make_repo({"README.md": "[Guide](docs/missing.md)\n```bash\npython missing.py\n```"})
@@ -152,6 +165,46 @@ class RepoTruthTests(unittest.TestCase):
         self.assertIn("RT110", rules)
         self.assertIn("RT112", rules)
 
+    def test_test_only_dangerous_call_is_informational(self):
+        root = self.make_repo({"README.md": "# App", "tests/test_pickle.py": "import pickle\npickle.loads(b'x')"})
+        finding = next(item for item in scan_repository(root).findings if item.rule_id == "RT111")
+        self.assertEqual(finding.severity, "info")
+
+    def test_regexp_exec_and_vendored_javascript_are_not_shell_calls(self):
+        root = self.make_repo({
+            "README.md": "# App",
+            "app.js": "const ok = /x/.exec(value)",
+            "static/js/libs/jquery.min.js": "thing.exec(value); eval(value)",
+        })
+        self.assertNotIn("RT112", [item.rule_id for item in scan_repository(root).findings])
+        self.assertNotIn("RT110", [item.rule_id for item in scan_repository(root).findings])
+
+    def test_child_process_exec_is_detected(self):
+        root = self.make_repo({"README.md": "# App", "app.js": "const { exec } = require('child_process'); exec(userInput)"})
+        self.assertIn("RT112", [item.rule_id for item in scan_repository(root).findings])
+
+    def test_dangerous_java_constructs_are_detected(self):
+        root = self.make_repo({"README.md": "# App", "App.java": "class App { void x(String v) throws Exception { Runtime.getRuntime().exec(v); new java.io.ObjectInputStream(null).readObject(); } }"})
+        rules = {item.rule_id for item in scan_repository(root).findings}
+        self.assertTrue({"RT111", "RT112"}.issubset(rules))
+
+    def test_dangerous_php_constructs_are_detected(self):
+        payload = "<?php " + "ev" + "al($_POST['code']); " + "sys" + "tem($_GET['cmd']); " + "unseri" + "alize($_COOKIE['data']); " + "incl" + "ude($_GET['page']); " + "mysqli_" + "query($db, $_POST['sql']);"
+        root = self.make_repo({"README.md": "# App", "index.php": "<?php // fixture"})
+        with patch("repotruth.security._read", return_value=payload):
+            rules = {item.rule_id for item in _php_findings(root, [root / "index.php"])}
+        self.assertTrue({"RT110", "RT111", "RT112", "RT115", "RT116"}.issubset(rules), rules)
+
+    def test_vendored_placeholders_are_ignored(self):
+        root = self.make_repo({"README.md": "# App", "static/js/libs/jquery.js": "// TODO vendor code"})
+        self.assertNotIn("RT008", [item.rule_id for item in scan_repository(root).findings])
+
+    def test_repeated_rule_has_bounded_score_penalty(self):
+        files = {"README.md": "# App"}
+        files.update({f"src/file{i}.py": "# TODO\n" for i in range(20)})
+        result = scan_repository(self.make_repo(files))
+        self.assertEqual(result.score, 94)
+
     def test_dependency_supply_chain_risks(self):
         root = self.make_repo({"README.md": "# App", "package.json": json.dumps({"dependencies": {"x": "latest"}, "scripts": {"postinstall": "node setup.js"}})})
         rules = {item.rule_id for item in scan_repository(root).findings}
@@ -185,6 +238,17 @@ class RepoTruthTests(unittest.TestCase):
             findings, status = osv_findings(root)
         self.assertEqual(findings[0].rule_id, "RT140")
         self.assertEqual(status["vulnerable_packages"], 1)
+
+    def test_osv_reads_python_node_go_rust_and_php_locks(self):
+        root = self.make_repo({
+            "requirements.txt": "requests==2.31.0\n",
+            "package-lock.json": json.dumps({"packages": {"node_modules/express": {"version": "4.18.2"}}}),
+            "go.sum": "golang.org/x/text v0.3.0 h1:demo\ngolang.org/x/text v0.3.0/go.mod h1:demo\n",
+            "Cargo.lock": '[[package]]\nname = "serde"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n',
+            "composer.lock": json.dumps({"packages": [{"name": "symfony/http-foundation", "version": "v6.0.0"}]}),
+        })
+        ecosystems = {item[0] for item in _packages(root)}
+        self.assertEqual(ecosystems, {"PyPI", "npm", "Go", "crates.io", "Packagist"})
 
 
 if __name__ == "__main__":
