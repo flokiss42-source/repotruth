@@ -11,10 +11,11 @@ from urllib.request import Request, urlopen
 from repotruth.reporters import github_report, html_report, sarif_report
 from repotruth.scanner import scan_repository
 from repotruth.server import RepoTruthHandler, ScanError, github_clone_url
-from repotruth.fixes import apply_fixes, propose_fixes
+from repotruth.fixes import apply_fixes, explain_fixes, propose_fixes, render_explanations
 from repotruth.runtime import verify_runtime
 from repotruth.security import _php_findings
 from repotruth.vulnerabilities import _packages, osv_findings
+from repotruth.benchmark import local_benchmark
 
 
 class RepoTruthTests(unittest.TestCase):
@@ -65,6 +66,18 @@ class RepoTruthTests(unittest.TestCase):
         result = scan_repository(root)
         self.assertEqual(result.findings, [])
         self.assertEqual(result.score, 100)
+        self.assertEqual(result.facts["benchmark"]["verdict"], "trusted-relative")
+
+    def test_benchmark_compares_with_same_ecosystem(self):
+        root = self.make_repo({"pyproject.toml": "[project]\nname='demo'", "README.md": "# Demo"})
+        benchmark = local_benchmark(root, 92)
+        self.assertEqual(benchmark.ecosystem, "python")
+        self.assertGreaterEqual(benchmark.percentile, 80)
+
+    def test_benchmark_flags_score_below_peer_median(self):
+        root = self.make_repo({"go.mod": "module example.test/demo", "README.md": "# Demo"})
+        benchmark = local_benchmark(root, 76)
+        self.assertEqual(benchmark.verdict, "caution-below-peers")
 
     def test_production_placeholder_is_medium(self):
         root = self.make_repo({"README.md": "Production-ready", "src/app.py": "raise NotImplementedError"})
@@ -76,7 +89,7 @@ class RepoTruthTests(unittest.TestCase):
         result = scan_repository(self.make_repo({"README.md": "[Missing](nope.md)"}))
         sarif = json.loads(sarif_report(result))
         self.assertEqual(sarif["version"], "2.1.0")
-        self.assertEqual(sarif["runs"][0]["tool"]["driver"]["version"], "0.5.1")
+        self.assertEqual(sarif["runs"][0]["tool"]["driver"]["version"], "0.6.0")
         self.assertIn("RepoTruth", html_report(result))
         self.assertIn("::warning file=README.md", github_report(result))
 
@@ -135,7 +148,7 @@ class RepoTruthTests(unittest.TestCase):
         base = f"http://127.0.0.1:{server.server_port}"
         health = json.loads(urlopen(f"{base}/api/health").read())
         self.assertTrue(health["ok"])
-        self.assertEqual(health["version"], "0.5.1")
+        self.assertEqual(health["version"], "0.6.0")
         body = json.dumps({"mode": "local", "value": str(root)}).encode()
         request = Request(f"{base}/api/scan", data=body, headers={"Content-Type": "application/json", "Origin": base})
         payload = json.loads(urlopen(request).read())
@@ -166,6 +179,19 @@ class RepoTruthTests(unittest.TestCase):
         rules = [item.rule_id for item in scan_repository(root).findings]
         self.assertIn("RT110", rules)
         self.assertIn("RT112", rules)
+
+    def test_constant_eval_does_not_create_a_security_finding(self):
+        root = self.make_repo({"README.md": "# App", "app.py": "result = eval('2 + 2')"})
+        self.assertNotIn("RT110", [item.rule_id for item in scan_repository(root).findings])
+
+    def test_untrusted_input_flow_to_eval_is_high_confidence(self):
+        root = self.make_repo({"README.md": "# App", "app.py": "value = input()\nexpression = value.strip()\neval(expression)"})
+        finding = next(item for item in scan_repository(root).findings if item.rule_id == "RT150")
+        self.assertEqual(finding.severity, "high")
+
+    def test_environment_secret_flow_to_network_is_detected(self):
+        root = self.make_repo({"README.md": "# App", "app.py": "import os, requests\ntoken = os.getenv('TOKEN')\nrequests.post('https://example.test', data=token)"})
+        self.assertIn("RT151", [item.rule_id for item in scan_repository(root).findings])
 
     def test_test_only_dangerous_call_is_informational(self):
         root = self.make_repo({"README.md": "# App", "tests/test_pickle.py": "import pickle\npickle.loads(b'x')"})
@@ -221,6 +247,14 @@ class RepoTruthTests(unittest.TestCase):
         self.assertEqual(len(created), len(proposals))
         self.assertEqual(apply_fixes(root, proposals), [])
 
+    def test_explained_fix_offers_multiple_risk_graded_choices(self):
+        root = self.make_repo({"README.md": "# App", "app.py": "value = input()\neval(value)"})
+        explanation = next(item for item in explain_fixes(root) if item.rule_id == "RT150")
+        self.assertGreaterEqual(len(explanation.choices), 2)
+        self.assertEqual(explanation.confidence, "high")
+        rendered = json.loads(render_explanations([explanation], "json"))
+        self.assertEqual(rendered[0]["choices"][0]["change_risk"], "low")
+
     def test_runtime_verification_never_falls_back_to_host_execution(self):
         root = self.make_repo({"app.py": "print('ok')"})
         result = verify_runtime(root)
@@ -251,6 +285,24 @@ class RepoTruthTests(unittest.TestCase):
         })
         ecosystems = {item[0] for item in _packages(root)}
         self.assertEqual(ecosystems, {"PyPI", "npm", "Go", "crates.io", "Packagist"})
+
+    def test_pre_commit_and_editor_integrations_are_wired(self):
+        project = Path(__file__).parents[1]
+        hook = (project / ".pre-commit-hooks.yaml").read_text(encoding="utf-8")
+        manifest = json.loads((project / "integrations/vscode/package.json").read_text(encoding="utf-8"))
+        extension = (project / "integrations/vscode/extension.js").read_text(encoding="utf-8")
+        self.assertIn("id: repotruth", hook)
+        self.assertFalse("pass_filenames: true" in hook)
+        self.assertEqual(manifest["main"], "./extension.js")
+        self.assertIn("repotruth.scan", {item["command"] for item in manifest["contributes"]["commands"]})
+        self.assertIn("DiagnosticCollection", extension)
+
+    def test_dependency_pr_workflow_manages_untrusted_label(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/dependency-trust.yml").read_text(encoding="utf-8")
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("repotruth:untrusted", workflow)
+        self.assertIn("--add-label", workflow)
+        self.assertIn("--remove-label", workflow)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,91 @@ class ProposedFile:
     path: str
     reason: str
     content: str
+
+
+@dataclass(frozen=True)
+class FixChoice:
+    title: str
+    change_risk: str
+    effort: str
+    guidance: str
+
+
+@dataclass(frozen=True)
+class ExplainedFix:
+    rule_id: str
+    path: str
+    line: int
+    finding: str
+    why: str
+    confidence: str
+    choices: tuple[FixChoice, ...]
+
+    def to_dict(self) -> dict:
+        return {
+            "rule_id": self.rule_id,
+            "path": self.path,
+            "line": self.line,
+            "finding": self.finding,
+            "why": self.why,
+            "confidence": self.confidence,
+            "choices": [item.__dict__ for item in self.choices],
+        }
+
+
+def explain_fixes(root: Path) -> list[ExplainedFix]:
+    from .scanner import scan_repository
+
+    result = scan_repository(root)
+    explanations: list[ExplainedFix] = []
+    for finding in result.findings:
+        if finding.rule_id in {"RT150", "RT151"}:
+            why = "RepoTruth traced a value from a trust-boundary source to a security-sensitive sink."
+            confidence = "high"
+            choices = (
+                FixChoice("Validate at the boundary", "low", "small", "Constrain the input with an explicit allowlist before it enters application logic."),
+                FixChoice("Replace executable text with structured data", "medium", "medium", "Change the sink API to accept typed values or an argument list rather than code, SQL, or a shell string."),
+                FixChoice("Remove the dynamic feature", "medium", "large", "Delete the dynamic execution path when it is not essential; this gives the smallest remaining attack surface."),
+            )
+        elif finding.rule_id in {"RT110", "RT111", "RT112", "RT114", "RT115", "RT116"}:
+            why = "The construct is security-sensitive even when its current caller appears controlled; future data-flow changes can make it exploitable."
+            confidence = "medium"
+            choices = (
+                FixChoice("Use the safe API", "low", "small", finding.remediation),
+                FixChoice("Add a narrow adapter", "medium", "medium", "Wrap the operation in one reviewed function that validates types, destinations, and allowed values."),
+                FixChoice("Document and suppress intentionally", "low", "small", f"If the risk is accepted, add a path-specific {finding.rule_id} ignore with a review note and expiry date."),
+            )
+        elif finding.rule_id in {"RT120", "RT121", "RT122", "RT123", "RT140"}:
+            why = "Dependency installation or resolution can change the code that runs without a corresponding source change."
+            confidence = "high" if finding.rule_id == "RT140" else "medium"
+            choices = (
+                FixChoice("Pin or upgrade", "medium", "small", finding.remediation),
+                FixChoice("Isolate the dependency", "low", "medium", "Move it behind a minimal adapter and test the security-relevant behavior before upgrading."),
+                FixChoice("Replace the dependency", "high", "large", "Choose a maintained alternative when a safe compatible version is unavailable."),
+            )
+        else:
+            why = "Repository evidence does not currently support the documented claim or expected trust control."
+            confidence = "high" if finding.severity == "high" else "medium"
+            choices = (
+                FixChoice("Restore the evidence", "low", "small", finding.remediation),
+                FixChoice("Narrow the claim", "low", "small", "Update documentation so it states only behavior that the committed repository can demonstrate."),
+            )
+        explanations.append(ExplainedFix(finding.rule_id, finding.path, finding.line, finding.title, why, confidence, choices))
+    return explanations
+
+
+def render_explanations(explanations: list[ExplainedFix], output_format: str = "terminal") -> str:
+    if output_format == "json":
+        return json.dumps([item.to_dict() for item in explanations], ensure_ascii=False, indent=2)
+    if not explanations:
+        return "No findings require an explained fix."
+    lines: list[str] = []
+    for item in explanations:
+        lines.extend((f"{item.rule_id} {item.path}:{item.line} - {item.finding}", f"Why: {item.why}", f"Confidence: {item.confidence}"))
+        for index, choice in enumerate(item.choices, 1):
+            lines.append(f"  {index}. {choice.title} [change-risk={choice.change_risk}, effort={choice.effort}] {choice.guidance}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 def propose_fixes(root: Path) -> list[ProposedFile]:

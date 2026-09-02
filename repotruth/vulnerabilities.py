@@ -70,7 +70,7 @@ def osv_findings(root: Path) -> tuple[list[Finding], dict]:
     if not packages:
         return [], {"status": "not_applicable", "packages_checked": 0}
     queries = [{"package": {"ecosystem": ecosystem, "name": name}, "version": version} for ecosystem, name, version, _, _ in packages]
-    request = Request(OSV_ENDPOINT, data=json.dumps({"queries": queries}).encode(), headers={"Content-Type": "application/json", "User-Agent": "RepoTruth/0.5"}, method="POST")
+    request = Request(OSV_ENDPOINT, data=json.dumps({"queries": queries}).encode(), headers={"Content-Type": "application/json", "User-Agent": "RepoTruth/0.6"}, method="POST")
     try:
         with urlopen(request, timeout=20) as response:
             payload = json.loads(response.read(8 * 1024 * 1024))

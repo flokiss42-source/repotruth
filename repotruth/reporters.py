@@ -10,6 +10,9 @@ COLORS = {"high": "31", "medium": "33", "low": "36", "info": "37"}
 
 def terminal_report(result: ScanResult, color: bool = True) -> str:
     lines = [f"RepoTruth {result.grade}  score={result.score}/100  findings={len(result.findings)}", f"Scanned: {result.root}"]
+    benchmark = result.facts.get("benchmark", {})
+    if benchmark:
+        lines.append(f"Benchmark: safer than {benchmark.get('percentile', 0)}% of the {benchmark.get('ecosystem', 'unknown')} calibration cohort | median {benchmark.get('cohort_median', 0)} | {benchmark.get('verdict', 'unknown')}")
     for item in result.findings:
         label = item.severity.upper()
         if color:
@@ -36,7 +39,7 @@ def sarif_report(result: ScanResult) -> str:
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
         "runs": [{
-            "tool": {"driver": {"name": "RepoTruth", "version": "0.5.1", "informationUri": "https://github.com/flokiss42-source/repotruth", "rules": list(rules.values())}},
+            "tool": {"driver": {"name": "RepoTruth", "version": "0.6.0", "informationUri": "https://github.com/flokiss42-source/repotruth", "rules": list(rules.values())}},
             "results": [{
                 "ruleId": item.rule_id,
                 "level": levels.get(item.severity, "warning"),

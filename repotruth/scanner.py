@@ -276,4 +276,7 @@ def scan_repository(path: str | Path, config_path: str | Path | None = None, ver
         elif runtime.status == "timeout":
             result.findings.append(Finding("RT201", "medium", "Sandbox runtime check timed out", runtime.reason, ".", 1, " ".join(runtime.command or []), "Make the verification command deterministic and faster."))
         result.findings.sort(key=lambda item: ({"high": 0, "medium": 1, "low": 2, "info": 3}.get(item.severity, 4), item.path, item.line, item.rule_id))
+    from .benchmark import local_benchmark
+
+    result.facts["benchmark"] = local_benchmark(root, result.score).to_dict()
     return result

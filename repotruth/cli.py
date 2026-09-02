@@ -21,7 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-color", action="store_true")
     parser.add_argument("--verify-runtime", action="store_true", help="run a detected check in a locked-down, offline Docker container")
     parser.add_argument("--online", action="store_true", help="query OSV.dev for known vulnerabilities in pinned dependencies")
-    parser.add_argument("--version", action="version", version="RepoTruth 0.5.1")
+    parser.add_argument("--benchmark-url", help="opt in to submit aggregate-only scan metrics to a compatible benchmark endpoint")
+    parser.add_argument("--version", action="version", version="RepoTruth 0.6.0")
     return parser
 
 
@@ -38,6 +39,8 @@ def fix_parser(command: str) -> argparse.ArgumentParser:
     parser.add_argument("path", nargs="?", default=".")
     if command == "fix":
         parser.add_argument("--apply", action="store_true", help="create the proposed files; preview is the default")
+        parser.add_argument("--explain", action="store_true", help="explain findings and offer multiple remediation strategies")
+        parser.add_argument("--format", choices=("terminal", "json"), default="terminal")
     return parser
 
 
@@ -49,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         serve_args = serve_parser().parse_args(actual_argv[1:])
         return serve(serve_args.host, serve_args.port, serve_args.open_browser)
     if actual_argv and actual_argv[0] in {"fix", "pr"}:
-        from .fixes import apply_fixes, create_pull_request, propose_fixes, render_fix_plan
+        from .fixes import apply_fixes, create_pull_request, explain_fixes, propose_fixes, render_explanations, render_fix_plan
 
         command = actual_argv[0]
         fix_args = fix_parser(command).parse_args(actual_argv[1:])
@@ -60,6 +63,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if command == "pr":
                 print(create_pull_request(root))
+                return 0
+            if fix_args.explain:
+                if fix_args.apply:
+                    raise RuntimeError("Use either --explain or --apply so code changes remain an explicit separate decision.")
+                print(render_explanations(explain_fixes(root), fix_args.format))
                 return 0
             proposals = propose_fixes(root)
             print(render_fix_plan(root, proposals))
@@ -77,6 +85,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"repotruth: {exc}", file=sys.stderr)
         return 2
 
+    if args.benchmark_url:
+        try:
+            from .benchmark import submit_benchmark
+
+            result.facts["benchmark"]["remote"] = submit_benchmark(args.benchmark_url, result)
+        except Exception as exc:
+            result.facts["benchmark"]["remote"] = {"status": "unavailable", "reason": type(exc).__name__}
     renderers = {"terminal": lambda: terminal_report(result, color=not args.no_color and sys.stdout.isatty()), "json": lambda: json_report(result), "sarif": lambda: sarif_report(result), "html": lambda: html_report(result), "github": lambda: github_report(result)}
     output = renderers[args.format]()
     if args.output:

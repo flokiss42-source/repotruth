@@ -1,0 +1,10 @@
+- id: repotruth
+  name: RepoTruth repository trust audit
+  description: Audit the complete repository for high-severity trust and security findings.
+  entry: repotruth
+  args: [., --fail-on, high, --no-color]
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit, pre-push]
+

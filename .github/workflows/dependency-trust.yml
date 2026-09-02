@@ -1,0 +1,56 @@
+name: dependency trust
+
+on:
+  pull_request:
+    paths:
+      - "**/requirements*.txt"
+      - "**/pyproject.toml"
+      - "**/poetry.lock"
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "**/yarn.lock"
+      - "**/pnpm-lock.yaml"
+      - "**/go.mod"
+      - "**/go.sum"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "**/pom.xml"
+      - "**/build.gradle*"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  trust-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - id: audit
+        continue-on-error: true
+        uses: ./
+        with:
+          fail-on: high
+      - name: Create trust label if needed
+        if: steps.audit.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh label create "repotruth:untrusted" --color D73A4A --description "RepoTruth trust gate failed" --force
+      - name: Mark untrusted dependency PR
+        if: steps.audit.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr edit "${{ github.event.pull_request.number }}" --add-label "repotruth:untrusted"
+      - name: Clear stale trust label
+        if: steps.audit.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr edit "${{ github.event.pull_request.number }}" --remove-label "repotruth:untrusted" || true
+      - name: Enforce trust gate
+        if: steps.audit.outcome == 'failure'
+        run: exit 1
+

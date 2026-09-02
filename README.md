@@ -10,12 +10,12 @@ RepoTruth is an explainable security and evidence auditor for GitHub repositorie
 
 It is designed for maintainers, buyers, and developers reviewing unfamiliar or AI-generated projects. Static scanning never executes target code. Optional runtime verification is explicit and runs only inside a locked-down offline Docker container.
 
-![RepoTruth 0.5 browser interface](docs/web-ui-v05.png)
+![RepoTruth 0.6 browser interface](docs/web-ui-v06.png)
 
 <details>
 <summary>Example evidence report</summary>
 
-![RepoTruth 0.5 HTML evidence report](docs/repotruth-report-v05.png)
+![RepoTruth 0.6 HTML evidence report](docs/repotruth-report-v06.png)
 
 </details>
 
@@ -33,7 +33,7 @@ The web server listens on `127.0.0.1:8765` only. Remote scans accept public `htt
 
 ## Real-world calibration
 
-Version 0.5 was calibrated with static scans of public repositories across six ecosystems. Runtime execution remained disabled for intentionally vulnerable targets.
+Version 0.6 includes a bundled, reproducible calibration cohort across six ecosystems. Every scan reports a peer percentile and cohort median; optional `--benchmark-url` submission sends aggregate scores only. Runtime execution remained disabled for intentionally vulnerable targets.
 
 | Repository | Ecosystem | Result |
 |---|---|---:|
@@ -77,6 +77,8 @@ These scores describe the evidence visible to RepoTruth at the tested revisions.
 | `RT123` | Python dependency is not exactly pinned |
 | `RT130` | Large high-entropy encoded payload in source |
 | `RT140` | Pinned dependency matches a known OSV advisory |
+| `RT150` | Untrusted request or console input reaches code, command, or SQL execution |
+| `RT151` | An environment-derived secret reaches an outbound network call |
 | `RT200` | Test/build command failed in the Docker sandbox |
 | `RT201` | Sandbox verification timed out |
 
@@ -144,9 +146,12 @@ repotruth . --format html --output report.html
 repotruth . --format github
 repotruth . --online
 repotruth . --verify-runtime
+repotruth . --benchmark-url https://your-company.example/repotruth/results
 ```
 
 `--online` sends pinned package names and versions from npm, Python, Go, Rust, and Composer lock data to the public OSV.dev API. `--verify-runtime` requires Docker and an already downloaded `python:3.13-alpine` or `node:22-alpine` image. The container has no network, mounts the repository read-only, uses a non-root user, and has CPU, memory, PID, time, and temporary-storage limits.
+
+The built-in benchmark is local and deterministic. `--benchmark-url` is opt-in and sends only schema version, ecosystem, score, grade, and finding counts—never paths, source code, or secrets.
 
 ## Safe fixes and pull requests
 
@@ -160,6 +165,13 @@ Create only the proposed files, then review them:
 
 ```bash
 repotruth fix . --apply
+```
+
+Ask for risk-graded remediation choices without modifying code:
+
+```bash
+repotruth fix . --explain
+repotruth fix . --explain --format json
 ```
 
 For a repository you control, `repotruth pr .` requires a clean worktree, creates a dedicated branch, commits only the generated files, pushes it, and asks GitHub CLI to open a pull request. This command changes Git and GitHub state, so it runs only when invoked explicitly.
@@ -183,6 +195,22 @@ jobs:
 ```
 
 The action produces `repotruth.sarif`, which can be uploaded to GitHub code scanning in repositories where SARIF upload is available.
+
+## Pre-commit, IDE, and dependency PRs
+
+Use this repository directly with pre-commit:
+
+```yaml
+repos:
+  - repo: https://github.com/flokiss42-source/repotruth
+    rev: v0.6.0
+    hooks:
+      - id: repotruth
+```
+
+The dependency-free VS Code extension in `integrations/vscode` runs the local CLI, publishes editor diagnostics, and shows the score and peer percentile in the status bar. Its README contains packaging and installation instructions.
+
+Copy `.github/workflows/dependency-trust.yml` into a repository to audit dependency-changing pull requests. A failed high-severity gate adds `repotruth:untrusted`; a passing rerun removes a stale label.
 
 ## Philosophy
 

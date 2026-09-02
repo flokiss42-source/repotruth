@@ -42,7 +42,7 @@ def github_clone_url(value: str) -> str:
 
 def github_repository_size(clone_url: str) -> int | None:
     slug = urlparse(clone_url).path.strip("/").removesuffix(".git")
-    request = Request(f"https://api.github.com/repos/{slug}", headers={"Accept": "application/vnd.github+json", "User-Agent": "RepoTruth/0.5"})
+    request = Request(f"https://api.github.com/repos/{slug}", headers={"Accept": "application/vnd.github+json", "User-Agent": "RepoTruth/0.6"})
     try:
         with urlopen(request, timeout=10) as response:
             payload = json.loads(response.read(MAX_REQUEST_BYTES))
@@ -103,7 +103,7 @@ def scan_local(value: str, verify: bool = False, online: bool = False) -> dict:
 
 
 class RepoTruthHandler(BaseHTTPRequestHandler):
-    server_version = "RepoTruth/0.5"
+    server_version = "RepoTruth/0.6"
 
     def log_message(self, format: str, *args) -> None:
         return
@@ -137,7 +137,7 @@ class RepoTruthHandler(BaseHTTPRequestHandler):
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
         }
         if self.path == "/api/health":
-            self._json({"ok": True, "version": "0.5.1"})
+            self._json({"ok": True, "version": "0.6.0"})
         elif self.path in routes:
             self._asset(*routes[self.path])
         else:

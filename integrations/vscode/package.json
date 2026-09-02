@@ -1,0 +1,32 @@
+{
+  "name": "repotruth-vscode",
+  "displayName": "RepoTruth",
+  "description": "Repository trust findings directly in VS Code.",
+  "version": "0.6.0",
+  "publisher": "flokiss42",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Linters"],
+  "activationEvents": ["onStartupFinished", "onCommand:repotruth.scan"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [{ "command": "repotruth.scan", "title": "RepoTruth: Scan Workspace" }],
+    "configuration": {
+      "title": "RepoTruth",
+      "properties": {
+        "repotruth.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Python executable containing the repotruth package."
+        },
+        "repotruth.scanOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Scan once when a workspace opens."
+        }
+      }
+    }
+  },
+  "scripts": { "check": "node --check extension.js" },
+  "license": "MIT"
+}
+

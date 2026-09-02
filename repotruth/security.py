@@ -102,6 +102,8 @@ def _python_findings(root: Path, files: list[Path]) -> list[Finding]:
             elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
                 name = (node.func.value.id, node.func.attr)
             if name in dangerous:
+                if name in {("eval",), ("exec",)} and node.args and isinstance(node.args[0], ast.Constant):
+                    continue
                 rule, severity, title, fix = dangerous[name]
                 effective_severity = "info" if _is_test(root, path) else severity
                 findings.append(Finding(rule, effective_severity, title, f"Call to {'.'.join(name)} requires a trust-boundary review.", _relative(root, path), node.lineno, ".".join(name), fix))
@@ -109,6 +111,94 @@ def _python_findings(root: Path, files: list[Path]) -> list[Finding]:
                 shell_true = any(keyword.arg == "shell" and isinstance(keyword.value, ast.Constant) and keyword.value.value is True for keyword in node.keywords)
                 if shell_true:
                     findings.append(Finding("RT112", "info" if _is_test(root, path) else "high", "Subprocess uses shell=True", "Shell parsing can turn untrusted text into command execution.", _relative(root, path), node.lineno, "shell=True", "Pass an argument list with shell=False and validate external input."))
+    return findings[:30]
+
+
+def _attribute_name(node: ast.AST) -> tuple[str, ...]:
+    parts: list[str] = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+    return tuple(reversed(parts))
+
+
+def _expression_origins(node: ast.AST, origins: dict[str, set[str]]) -> set[str]:
+    if isinstance(node, ast.Name):
+        return set(origins.get(node.id, set()))
+    if isinstance(node, ast.Subscript):
+        chain = _attribute_name(node.value)
+        if chain in {("os", "environ"), ("environ",)}:
+            return {"secret"}
+        if chain[:2] in {("request", "args"), ("request", "form"), ("request", "values"), ("request", "json")} or chain == ("sys", "argv"):
+            return {"untrusted"}
+        return _expression_origins(node.value, origins) | _expression_origins(node.slice, origins)
+    if isinstance(node, ast.Call):
+        name = _attribute_name(node.func)
+        if name in {("input",), ("request", "get_json")} or name[-2:] in {("args", "get"), ("form", "get"), ("values", "get")}:
+            return {"untrusted"}
+        if name in {("os", "getenv"), ("getenv",)}:
+            return {"secret"}
+        found: set[str] = _expression_origins(node.func.value, origins) if isinstance(node.func, ast.Attribute) else set()
+        for item in [*node.args, *(keyword.value for keyword in node.keywords)]:
+            found |= _expression_origins(item, origins)
+        return found
+    if isinstance(node, (ast.BinOp, ast.BoolOp, ast.Compare, ast.JoinedStr, ast.FormattedValue, ast.List, ast.Tuple, ast.Dict, ast.Set)):
+        found: set[str] = set()
+        for child in ast.iter_child_nodes(node):
+            found |= _expression_origins(child, origins)
+        return found
+    if isinstance(node, ast.UnaryOp):
+        return _expression_origins(node.operand, origins)
+    return set()
+
+
+def _contextual_python_findings(root: Path, files: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    for path in files:
+        if path.suffix.lower() != ".py":
+            continue
+        text = _read(path)
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        origins: dict[str, set[str]] = {}
+        assignments = [node for node in ast.walk(tree) if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))]
+        for _ in range(4):
+            changed = False
+            for node in assignments:
+                value = getattr(node, "value", None)
+                if value is None:
+                    continue
+                value_origins = _expression_origins(value, origins)
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name) and value_origins - origins.get(target.id, set()):
+                        origins.setdefault(target.id, set()).update(value_origins)
+                        changed = True
+            if not changed:
+                break
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _attribute_name(node.func)
+            arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
+            argument_origins: set[str] = set()
+            for argument in arguments:
+                argument_origins |= _expression_origins(argument, origins)
+            sink = None
+            if name in {("eval",), ("exec",), ("os", "system"), ("subprocess", "run"), ("subprocess", "Popen"), ("subprocess", "call")}:
+                sink = "code or command execution"
+            elif name and name[-1] in {"execute", "executemany"}:
+                sink = "SQL execution"
+            if sink and "untrusted" in argument_origins:
+                findings.append(Finding("RT150", "high", "Untrusted data reaches a dangerous sink", f"User-controlled data flows into {sink} without a visible validation boundary.", _relative(root, path), node.lineno, ".".join(name), "Validate against an allowlist and pass structured values instead of executable text."))
+            network_sink = name in {("requests", "get"), ("requests", "post"), ("requests", "put"), ("urllib", "request", "urlopen"), ("urlopen",)}
+            if network_sink and "secret" in argument_origins:
+                findings.append(Finding("RT151", "high", "Sensitive environment data reaches the network", "A value originating from the process environment flows into an outbound network request.", _relative(root, path), node.lineno, ".".join(name), "Send only the minimum required credential in an explicit authentication field and verify the destination."))
     return findings[:30]
 
 
@@ -218,4 +308,4 @@ def _obfuscation_findings(root: Path, files: list[Path]) -> list[Finding]:
 
 
 def security_findings(root: Path, files: list[Path]) -> list[Finding]:
-    return _secret_findings(root, files) + _python_findings(root, files) + _javascript_findings(root, files) + _java_findings(root, files) + _php_findings(root, files) + _dependency_findings(root) + _obfuscation_findings(root, files)
+    return _secret_findings(root, files) + _python_findings(root, files) + _contextual_python_findings(root, files) + _javascript_findings(root, files) + _java_findings(root, files) + _php_findings(root, files) + _dependency_findings(root) + _obfuscation_findings(root, files)
