@@ -137,7 +137,7 @@ class RepoTruthHandler(BaseHTTPRequestHandler):
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
         }
         if self.path == "/api/health":
-            self._json({"ok": True, "version": "0.4.0"})
+            self._json({"ok": True, "version": "0.5.1"})
         elif self.path in routes:
             self._asset(*routes[self.path])
         else:

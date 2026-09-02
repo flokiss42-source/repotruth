@@ -76,6 +76,7 @@ class RepoTruthTests(unittest.TestCase):
         result = scan_repository(self.make_repo({"README.md": "[Missing](nope.md)"}))
         sarif = json.loads(sarif_report(result))
         self.assertEqual(sarif["version"], "2.1.0")
+        self.assertEqual(sarif["runs"][0]["tool"]["driver"]["version"], "0.5.1")
         self.assertIn("RepoTruth", html_report(result))
         self.assertIn("::warning file=README.md", github_report(result))
 
@@ -134,6 +135,7 @@ class RepoTruthTests(unittest.TestCase):
         base = f"http://127.0.0.1:{server.server_port}"
         health = json.loads(urlopen(f"{base}/api/health").read())
         self.assertTrue(health["ok"])
+        self.assertEqual(health["version"], "0.5.1")
         body = json.dumps({"mode": "local", "value": str(root)}).encode()
         request = Request(f"{base}/api/scan", data=body, headers={"Content-Type": "application/json", "Origin": base})
         payload = json.loads(urlopen(request).read())

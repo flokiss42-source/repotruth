@@ -21,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-color", action="store_true")
     parser.add_argument("--verify-runtime", action="store_true", help="run a detected check in a locked-down, offline Docker container")
     parser.add_argument("--online", action="store_true", help="query OSV.dev for known vulnerabilities in pinned dependencies")
-    parser.add_argument("--version", action="version", version="RepoTruth 0.5.0")
+    parser.add_argument("--version", action="version", version="RepoTruth 0.5.1")
     return parser
 
 

@@ -10,12 +10,12 @@ RepoTruth is an explainable security and evidence auditor for GitHub repositorie
 
 It is designed for maintainers, buyers, and developers reviewing unfamiliar or AI-generated projects. Static scanning never executes target code. Optional runtime verification is explicit and runs only inside a locked-down offline Docker container.
 
-![RepoTruth browser interface](docs/web-ui-v04.png)
+![RepoTruth 0.5 browser interface](docs/web-ui-v05.png)
 
 <details>
 <summary>Example evidence report</summary>
 
-![RepoTruth HTML evidence report](docs/repotruth-report.png)
+![RepoTruth 0.5 HTML evidence report](docs/repotruth-report-v05.png)
 
 </details>
 
@@ -30,6 +30,23 @@ python -m repotruth serve --open
 ```
 
 The web server listens on `127.0.0.1:8765` only. Remote scans accept public `https://github.com/owner/project` URLs and enforce time and size limits.
+
+## Real-world calibration
+
+Version 0.5 was calibrated with static scans of public repositories across six ecosystems. Runtime execution remained disabled for intentionally vulnerable targets.
+
+| Repository | Ecosystem | Result |
+|---|---|---:|
+| [psf/requests](https://github.com/psf/requests) | Python | A · 92 |
+| [expressjs/express](https://github.com/expressjs/express) | Node.js | A · 90 |
+| [go-chi/chi](https://github.com/go-chi/chi) | Go | A · 94 |
+| [serde-rs/json](https://github.com/serde-rs/json) | Rust | A · 100 |
+| [OWASP Juice Shop](https://github.com/juice-shop/juice-shop) | intentionally vulnerable Node.js | F · 23 |
+| [OWASP WebGoat](https://github.com/WebGoat/WebGoat) | intentionally vulnerable Java | F · 0 |
+| [OWASP NodeGoat](https://github.com/OWASP/NodeGoat) | intentionally vulnerable Node.js | F · 0 |
+| [DVWA](https://github.com/digininja/DVWA) | intentionally vulnerable PHP | F · 22 |
+
+These scores describe the evidence visible to RepoTruth at the tested revisions. They are regression signals, not endorsements or security certifications.
 
 ## What it detects
 
