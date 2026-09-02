@@ -19,12 +19,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="configuration file (default: .repotruth.json)")
     parser.add_argument("--fail-on", choices=("none", "info", "low", "medium", "high"), default="high", help="minimum severity that produces exit code 1")
     parser.add_argument("--no-color", action="store_true")
-    parser.add_argument("--version", action="version", version="RepoTruth 0.2.0")
+    parser.add_argument("--version", action="version", version="RepoTruth 0.3.0")
+    return parser
+
+
+def serve_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="repotruth serve", description="Start the local RepoTruth web interface.")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--open", action="store_true", dest="open_browser")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    actual_argv = list(sys.argv[1:] if argv is None else argv)
+    if actual_argv and actual_argv[0] == "serve":
+        from .server import serve
+
+        serve_args = serve_parser().parse_args(actual_argv[1:])
+        return serve(serve_args.host, serve_args.port, serve_args.open_browser)
+    args = build_parser().parse_args(actual_argv)
     try:
         result = scan_repository(args.path, args.config)
     except ValueError as exc:

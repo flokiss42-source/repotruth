@@ -36,7 +36,7 @@ def sarif_report(result: ScanResult) -> str:
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
         "runs": [{
-            "tool": {"driver": {"name": "RepoTruth", "version": "0.2.0", "informationUri": "https://github.com/flokiss42-source/repotruth", "rules": list(rules.values())}},
+            "tool": {"driver": {"name": "RepoTruth", "version": "0.3.0", "informationUri": "https://github.com/flokiss42-source/repotruth", "rules": list(rules.values())}},
             "results": [{
                 "ruleId": item.rule_id,
                 "level": levels.get(item.severity, "warning"),

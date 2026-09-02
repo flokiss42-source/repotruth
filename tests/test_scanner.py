@@ -1,10 +1,15 @@
 import json
 import tempfile
+import threading
 import unittest
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from repotruth.reporters import github_report, html_report, sarif_report
 from repotruth.scanner import scan_repository
+from repotruth.server import RepoTruthHandler, ScanError, github_clone_url
 
 
 class RepoTruthTests(unittest.TestCase):
@@ -94,6 +99,40 @@ class RepoTruthTests(unittest.TestCase):
         })
         finding = next(item for item in scan_repository(root).findings if item.rule_id == "RT010")
         self.assertEqual(finding.title, "Unsafe evidence path")
+
+    def test_github_url_is_strictly_normalized(self):
+        self.assertEqual(github_clone_url("flokiss42-source/repotruth"), "https://github.com/flokiss42-source/repotruth.git")
+        self.assertEqual(github_clone_url("https://github.com/a/b.git"), "https://github.com/a/b.git")
+        for invalid in ("http://github.com/a/b", "https://evil.example/a/b", "https://github.com/a/b/issues"):
+            with self.subTest(invalid=invalid), self.assertRaises(ScanError):
+                github_clone_url(invalid)
+
+    def test_web_health_and_local_scan(self):
+        root = self.make_repo({"README.md": "# Project"})
+        server = ThreadingHTTPServer(("127.0.0.1", 0), RepoTruthHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_port}"
+        health = json.loads(urlopen(f"{base}/api/health").read())
+        self.assertTrue(health["ok"])
+        body = json.dumps({"mode": "local", "value": str(root)}).encode()
+        request = Request(f"{base}/api/scan", data=body, headers={"Content-Type": "application/json", "Origin": base})
+        payload = json.loads(urlopen(request).read())
+        self.assertEqual(payload["result"]["score"], 100)
+
+    def test_web_blocks_cross_origin_scan(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), RepoTruthHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        body = json.dumps({"mode": "local", "value": "."}).encode()
+        request = Request(f"http://127.0.0.1:{server.server_port}/api/scan", data=body, headers={"Content-Type": "application/json", "Origin": "https://evil.example"})
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(request)
+        self.assertEqual(caught.exception.code, 400)
 
 
 if __name__ == "__main__":

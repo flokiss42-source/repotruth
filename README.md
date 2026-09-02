@@ -10,7 +10,26 @@ RepoTruth is an evidence-first static analyzer for GitHub repositories. It catch
 
 It is designed for maintainers reviewing fast-moving and AI-generated projects. RepoTruth treats every scanned file as untrusted data and never executes commands from the target repository.
 
+![RepoTruth browser interface](docs/web-ui.png)
+
+<details>
+<summary>Example evidence report</summary>
+
 ![RepoTruth HTML evidence report](docs/repotruth-report.png)
+
+</details>
+
+## Browser interface
+
+On Windows, double-click `start-repotruth.bat`. The local interface opens in your browser. Paste a public GitHub URL or switch to **Local folder**, enter a path, and press **Scan repository**.
+
+On any platform:
+
+```bash
+python -m repotruth serve --open
+```
+
+The web server listens on `127.0.0.1:8765` only. Remote scans accept public `https://github.com/owner/project` URLs, enforce time and size limits, and never execute downloaded repository code.
 
 ## What it detects
 

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RepoTruth — prove the README</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <nav><span class="mark">RT</span><b>RepoTruth</b><span class="version">v0.3</span></nav>
+    <section class="hero">
+      <p class="eyebrow">EVIDENCE-FIRST REPOSITORY SCANNER</p>
+      <h1>Does the code deliver<br><em>what the README promises?</em></h1>
+      <p class="lead">Paste a public GitHub repository or scan a folder on this computer. RepoTruth checks claims against visible evidence without executing target code.</p>
+    </section>
+    <section class="scanner">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-mode="github">GitHub URL</button>
+        <button class="tab" data-mode="local">Local folder</button>
+      </div>
+      <form id="scan-form">
+        <input id="target" autocomplete="off" value="https://github.com/flokiss42-source/repotruth" placeholder="https://github.com/owner/project" aria-label="Repository target">
+        <button id="submit" type="submit"><span>Scan repository</span><span class="arrow">→</span></button>
+      </form>
+      <p class="hint" id="hint">Only public github.com repositories. No repository code is executed.</p>
+    </section>
+    <section id="status" class="status hidden"></section>
+    <section id="result" class="result hidden">
+      <header class="result-head">
+        <div><p class="eyebrow">VERDICT</p><h2 id="repo-name"></h2><p id="facts" class="facts"></p></div>
+        <div class="score-wrap"><span id="grade"></span><strong id="score"></strong><small>/100</small></div>
+      </header>
+      <div id="findings"></div>
+    </section>
+    <footer>Truth should be reproducible.</footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
