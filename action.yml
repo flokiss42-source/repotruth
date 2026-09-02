@@ -20,7 +20,6 @@ runs:
       env:
         PYTHONPATH: ${{ github.action_path }}
     - shell: bash
-      run: python -m repotruth "${{ inputs.path }}" --fail-on "${{ inputs.fail-on }}" --no-color
+      run: python -m repotruth "${{ inputs.path }}" --format github --fail-on "${{ inputs.fail-on }}" --no-color
       env:
         PYTHONPATH: ${{ github.action_path }}
-

@@ -25,6 +25,36 @@ It is designed for maintainers reviewing fast-moving and AI-generated projects. 
 | `RT006` | Testing claim without committed tests |
 | `RT007` | MIT license claim without a license file |
 | `RT008` | TODO, FIXME, or `NotImplementedError` in implementation code |
+| `RT009` | An explicit Evidence Contract lost its required files |
+| `RT010` | RepoTruth configuration is invalid |
+
+## Evidence Contracts
+
+Heuristic rules find suspicious mismatches. Evidence Contracts go further: they let maintainers make an important claim executable.
+
+Create `.repotruth.json`:
+
+```json
+{
+  "contracts": [
+    {
+      "id": "cross-platform",
+      "claim": "Runs on Windows, Linux, and macOS",
+      "evidence": [
+        ".github/workflows/test.yml",
+        "tests/test_cli.py"
+      ],
+      "require": "all",
+      "severity": "high"
+    }
+  ],
+  "ignore": [
+    { "rule": "RT008", "path": "generated/**" }
+  ]
+}
+```
+
+If a later pull request deletes the workflow or test, the claim remains visible but its evidence contract breaks the build. Glob patterns are supported, and `require` accepts `all` or `any`.
 
 ## Thirty-second demo
 
@@ -53,12 +83,13 @@ python -m pip install .
 repotruth .
 ```
 
-Supported formats are terminal, JSON, SARIF 2.1.0, and standalone HTML:
+Supported formats are terminal, JSON, SARIF 2.1.0, GitHub workflow annotations, and standalone HTML:
 
 ```bash
 repotruth . --format json
 repotruth . --format sarif --output repotruth.sarif
 repotruth . --format html --output report.html
+repotruth . --format github
 ```
 
 Exit code `1` is returned when a finding meets `--fail-on`. The default threshold is `high`.

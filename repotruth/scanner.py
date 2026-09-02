@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import io
+import fnmatch
 import re
 import tokenize
 from pathlib import Path
@@ -13,6 +14,68 @@ from .models import Finding, ScanResult
 IGNORED_DIRS = {".git", ".venv", "venv", "node_modules", "dist", "build", "coverage", ".next"}
 SOURCE_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".kt", ".rb"}
 TEST_MARKERS = ("test_", "_test.", ".test.", ".spec.")
+
+
+def _load_config(root: Path, config_path: str | Path | None) -> tuple[dict, list[Finding]]:
+    path = Path(config_path) if config_path else root / ".repotruth.json"
+    if not path.is_absolute():
+        path = root / path
+    if not path.exists():
+        return {}, []
+    try:
+        data = json.loads(_read(path))
+        if not isinstance(data, dict):
+            raise ValueError("configuration root must be a JSON object")
+        return data, []
+    except (json.JSONDecodeError, ValueError) as exc:
+        try:
+            display = path.relative_to(root).as_posix()
+        except ValueError:
+            display = str(path)
+        return {}, [Finding("RT010", "high", "Invalid RepoTruth configuration", f"Could not parse configuration: {exc}", display, 1, "", "Fix the JSON syntax and configuration shape.")]
+
+
+def _contract_findings(root: Path, config: dict) -> list[Finding]:
+    findings: list[Finding] = []
+    contracts = config.get("contracts", [])
+    if not isinstance(contracts, list):
+        return [Finding("RT010", "high", "Invalid contracts configuration", "'contracts' must be a JSON array.", ".repotruth.json", 1, "", "Use an array of evidence contract objects.")]
+    for index, contract in enumerate(contracts):
+        if not isinstance(contract, dict):
+            findings.append(Finding("RT010", "high", "Invalid evidence contract", f"Contract #{index + 1} must be an object.", ".repotruth.json", 1))
+            continue
+        contract_id = str(contract.get("id", f"contract-{index + 1}"))
+        claim = str(contract.get("claim", contract_id))
+        evidence = contract.get("evidence", [])
+        mode = contract.get("require", "all")
+        severity = contract.get("severity", "high")
+        if not isinstance(evidence, list) or not evidence or mode not in {"all", "any"} or severity not in {"info", "low", "medium", "high"}:
+            findings.append(Finding("RT010", "high", "Invalid evidence contract", f"Contract '{contract_id}' needs a non-empty evidence array and require='all' or 'any'.", ".repotruth.json", 1, contract_id, "Correct the contract fields."))
+            continue
+        unsafe = [str(pattern) for pattern in evidence if Path(str(pattern)).is_absolute() or ".." in Path(str(pattern)).parts]
+        if unsafe:
+            findings.append(Finding("RT010", "high", "Unsafe evidence path", f"Contract '{contract_id}' references evidence outside the repository: {', '.join(unsafe)}", ".repotruth.json", 1, contract_id, "Use repository-relative glob patterns without '..'."))
+            continue
+        matches = {pattern: [path for path in root.glob(str(pattern)) if path.is_file()] for pattern in evidence}
+        satisfied = all(matches.values()) if mode == "all" else any(matches.values())
+        if not satisfied:
+            missing = [pattern for pattern, found in matches.items() if not found]
+            findings.append(Finding("RT009", str(severity), "Evidence contract is broken", f"Claim '{claim}' lost required evidence ({mode}): {', '.join(map(str, missing))}", ".repotruth.json", 1, contract_id, "Restore the evidence or update the claim and contract."))
+    return findings
+
+
+def _ignored(finding: Finding, config: dict) -> bool:
+    ignores = config.get("ignore", [])
+    if not isinstance(ignores, list):
+        return False
+    for item in ignores:
+        if not isinstance(item, dict):
+            continue
+        rule_matches = item.get("rule", "*") in {"*", finding.rule_id}
+        path_matches = fnmatch.fnmatch(finding.path, str(item.get("path", "*")))
+        if rule_matches and path_matches:
+            return True
+    return False
 
 
 def _line_number(text: str, offset: int) -> int:
@@ -50,7 +113,7 @@ def _broken_local_links(root: Path, readme: Path, text: str) -> list[Finding]:
         parsed = urlparse(raw)
         if parsed.scheme or raw.startswith(("#", "mailto:")):
             continue
-        target_text = unquote(parsed.path).replace("/", str(Path("/")).replace("\\", "/"))
+        target_text = unquote(parsed.path)
         target = (readme.parent / target_text).resolve()
         try:
             target.relative_to(root.resolve())
@@ -154,11 +217,13 @@ def _placeholder_findings(root: Path, files: list[Path], production_claimed: boo
     return findings
 
 
-def scan_repository(path: str | Path) -> ScanResult:
+def scan_repository(path: str | Path, config_path: str | Path | None = None) -> ScanResult:
     root = Path(path).resolve()
     if not root.is_dir():
         raise ValueError(f"Not a directory: {root}")
     result = ScanResult(root)
+    config, config_findings = _load_config(root, config_path)
+    result.findings.extend(config_findings)
     files = _files(root)
     readme, text = _readme(root)
     if readme is None:
@@ -170,11 +235,15 @@ def scan_repository(path: str | Path) -> ScanResult:
         production_claimed = bool(re.search(r"production[- ]ready|готов(?:о|ый) к продакшену", text, re.I))
         result.findings.extend(_placeholder_findings(root, files, production_claimed))
 
+    result.findings.extend(_contract_findings(root, config))
+    result.findings = [finding for finding in result.findings if not _ignored(finding, config)]
+
     result.findings.sort(key=lambda item: ({"high": 0, "medium": 1, "low": 2, "info": 3}.get(item.severity, 4), item.path, item.line, item.rule_id))
     result.facts = {
         "files_scanned": len(files),
         "readme": readme.name if readme else None,
         "test_files": sum(1 for path in files if any(marker in path.name.lower() for marker in TEST_MARKERS) or "tests" in path.parts),
         "ci_workflows": sum(1 for path in files if path.relative_to(root).as_posix().startswith(".github/workflows/")),
+        "evidence_contracts": len(config.get("contracts", [])) if isinstance(config.get("contracts", []), list) else 0,
     }
     return result

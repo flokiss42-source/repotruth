@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "repotruth"
-version = "0.1.0"
+version = "0.2.0"
 description = "Evidence-first README claim verifier for GitHub repositories"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,4 +22,3 @@ repotruth = "repotruth.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["repotruth*"]
-

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from repotruth.reporters import html_report, sarif_report
+from repotruth.reporters import github_report, html_report, sarif_report
 from repotruth.scanner import scan_repository
 
 
@@ -55,8 +55,46 @@ class RepoTruthTests(unittest.TestCase):
         sarif = json.loads(sarif_report(result))
         self.assertEqual(sarif["version"], "2.1.0")
         self.assertIn("RepoTruth", html_report(result))
+        self.assertIn("::warning file=README.md", github_report(result))
+
+    def test_broken_evidence_contract(self):
+        root = self.make_repo({
+            "README.md": "# Project",
+            ".repotruth.json": json.dumps({"contracts": [{"id": "release", "claim": "Releases are tested", "evidence": ["tests/test_release.py", ".github/workflows/release.yml"], "require": "all"}]}),
+            "tests/test_release.py": "def test_release(): assert True",
+        })
+        result = scan_repository(root)
+        finding = next(item for item in result.findings if item.rule_id == "RT009")
+        self.assertIn(".github/workflows/release.yml", finding.message)
+
+    def test_evidence_contract_any_mode(self):
+        root = self.make_repo({
+            "README.md": "# Project",
+            ".repotruth.json": json.dumps({"contracts": [{"id": "policy", "evidence": ["SECURITY.md", "THREAT_MODEL.md"], "require": "any"}]}),
+            "SECURITY.md": "# Security",
+        })
+        self.assertNotIn("RT009", [item.rule_id for item in scan_repository(root).findings])
+
+    def test_ignore_rule_and_path(self):
+        root = self.make_repo({
+            "README.md": "[Generated](generated/missing.md)",
+            ".repotruth.json": json.dumps({"ignore": [{"rule": "RT001", "path": "README.md"}]}),
+        })
+        self.assertEqual(scan_repository(root).findings, [])
+
+    def test_invalid_configuration(self):
+        root = self.make_repo({"README.md": "# Project", ".repotruth.json": "{"})
+        result = scan_repository(root)
+        self.assertIn("RT010", [item.rule_id for item in result.findings])
+
+    def test_contract_cannot_use_parent_evidence(self):
+        root = self.make_repo({
+            "README.md": "# Project",
+            ".repotruth.json": json.dumps({"contracts": [{"id": "escape", "evidence": ["../secret.txt"]}]}),
+        })
+        finding = next(item for item in scan_repository(root).findings if item.rule_id == "RT010")
+        self.assertEqual(finding.title, "Unsafe evidence path")
 
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -1,0 +1,25 @@
+{
+  "contracts": [
+    {
+      "id": "cross-platform-ci",
+      "claim": "RepoTruth runs on Windows, Linux, and macOS",
+      "evidence": [
+        ".github/workflows/test.yml",
+        "tests/test_scanner.py"
+      ],
+      "require": "all",
+      "severity": "high"
+    },
+    {
+      "id": "security-model",
+      "claim": "Scanned repository content is treated as untrusted data",
+      "evidence": [
+        "SECURITY.md",
+        "tests/test_scanner.py"
+      ],
+      "require": "all",
+      "severity": "high"
+    }
+  ],
+  "ignore": []
+}
