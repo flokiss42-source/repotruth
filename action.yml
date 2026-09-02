@@ -1,0 +1,26 @@
+name: RepoTruth
+description: Verify README claims against evidence in the repository
+branding:
+  icon: check-circle
+  color: green
+inputs:
+  path:
+    description: Repository path to scan
+    required: false
+    default: .
+  fail-on:
+    description: Minimum severity that fails the workflow
+    required: false
+    default: high
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: python -m repotruth "${{ inputs.path }}" --format sarif --output repotruth.sarif --fail-on none
+      env:
+        PYTHONPATH: ${{ github.action_path }}
+    - shell: bash
+      run: python -m repotruth "${{ inputs.path }}" --fail-on "${{ inputs.fail-on }}" --no-color
+      env:
+        PYTHONPATH: ${{ github.action_path }}
+
