@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>RepoTruth — prove the README</title>
+  <title>RepoTruth — audit before you run</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <main>
-    <nav><span class="mark">RT</span><b>RepoTruth</b><span class="version">v0.3</span></nav>
+    <nav><span class="mark">RT</span><b>RepoTruth</b><span class="version">v0.4</span></nav>
     <section class="hero">
-      <p class="eyebrow">EVIDENCE-FIRST REPOSITORY SCANNER</p>
-      <h1>Does the code deliver<br><em>what the README promises?</em></h1>
-      <p class="lead">Paste a public GitHub repository or scan a folder on this computer. RepoTruth checks claims against visible evidence without executing target code.</p>
+      <p class="eyebrow">SECURITY + EVIDENCE REPOSITORY AUDITOR</p>
+      <h1>Know what the code does<br><em>before you trust it.</em></h1>
+      <p class="lead">Find exposed secrets, dangerous code, supply-chain risks and README claims that the repository cannot prove.</p>
     </section>
     <section class="scanner">
       <div class="tabs" role="tablist">
@@ -23,6 +23,8 @@
         <input id="target" autocomplete="off" value="https://github.com/flokiss42-source/repotruth" placeholder="https://github.com/owner/project" aria-label="Repository target">
         <button id="submit" type="submit"><span>Scan repository</span><span class="arrow">→</span></button>
       </form>
+      <label class="verify"><input id="verify" type="checkbox"> Verify build/tests in an offline Docker sandbox <span>(optional)</span></label>
+      <label class="verify"><input id="online" type="checkbox" checked> Check pinned dependencies against OSV.dev <span>(sends package names and versions)</span></label>
       <p class="hint" id="hint">Only public github.com repositories. No repository code is executed.</p>
     </section>
     <section id="status" class="status hidden"></section>

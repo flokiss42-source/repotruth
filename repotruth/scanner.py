@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from .models import Finding, ScanResult
+from .security import security_findings
 
 
 IGNORED_DIRS = {".git", ".venv", "venv", "node_modules", "dist", "build", "coverage", ".next"}
@@ -217,7 +218,7 @@ def _placeholder_findings(root: Path, files: list[Path], production_claimed: boo
     return findings
 
 
-def scan_repository(path: str | Path, config_path: str | Path | None = None) -> ScanResult:
+def scan_repository(path: str | Path, config_path: str | Path | None = None, verify: bool = False, online: bool = False) -> ScanResult:
     root = Path(path).resolve()
     if not root.is_dir():
         raise ValueError(f"Not a directory: {root}")
@@ -236,6 +237,13 @@ def scan_repository(path: str | Path, config_path: str | Path | None = None) -> 
         result.findings.extend(_placeholder_findings(root, files, production_claimed))
 
     result.findings.extend(_contract_findings(root, config))
+    result.findings.extend(security_findings(root, files))
+    osv_status = {"status": "disabled", "packages_checked": 0}
+    if online:
+        from .vulnerabilities import osv_findings
+
+        osv_results, osv_status = osv_findings(root)
+        result.findings.extend(osv_results)
     result.findings = [finding for finding in result.findings if not _ignored(finding, config)]
 
     result.findings.sort(key=lambda item: ({"high": 0, "medium": 1, "low": 2, "info": 3}.get(item.severity, 4), item.path, item.line, item.rule_id))
@@ -245,5 +253,17 @@ def scan_repository(path: str | Path, config_path: str | Path | None = None) -> 
         "test_files": sum(1 for path in files if any(marker in path.name.lower() for marker in TEST_MARKERS) or "tests" in path.parts),
         "ci_workflows": sum(1 for path in files if path.relative_to(root).as_posix().startswith(".github/workflows/")),
         "evidence_contracts": len(config.get("contracts", [])) if isinstance(config.get("contracts", []), list) else 0,
+        "security_findings": sum(1 for finding in result.findings if finding.rule_id.startswith("RT1")),
+        "vulnerability_database": osv_status,
     }
+    if verify:
+        from .runtime import verify_runtime
+
+        runtime = verify_runtime(root)
+        result.facts["runtime"] = runtime.to_dict()
+        if runtime.status == "failed":
+            result.findings.append(Finding("RT200", "high", "Sandbox runtime check failed", f"The detected verification command exited with code {runtime.exit_code}.", ".", 1, " ".join(runtime.command or []), "Reproduce the command in a development environment and fix the failing build or tests."))
+        elif runtime.status == "timeout":
+            result.findings.append(Finding("RT201", "medium", "Sandbox runtime check timed out", runtime.reason, ".", 1, " ".join(runtime.command or []), "Make the verification command deterministic and faster."))
+        result.findings.sort(key=lambda item: ({"high": 0, "medium": 1, "low": 2, "info": 3}.get(item.severity, 4), item.path, item.line, item.rule_id))
     return result

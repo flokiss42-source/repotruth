@@ -19,7 +19,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="configuration file (default: .repotruth.json)")
     parser.add_argument("--fail-on", choices=("none", "info", "low", "medium", "high"), default="high", help="minimum severity that produces exit code 1")
     parser.add_argument("--no-color", action="store_true")
-    parser.add_argument("--version", action="version", version="RepoTruth 0.3.0")
+    parser.add_argument("--verify-runtime", action="store_true", help="run a detected check in a locked-down, offline Docker container")
+    parser.add_argument("--online", action="store_true", help="query OSV.dev for known vulnerabilities in pinned dependencies")
+    parser.add_argument("--version", action="version", version="RepoTruth 0.4.0")
     return parser
 
 
@@ -31,6 +33,14 @@ def serve_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def fix_parser(command: str) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=f"repotruth {command}", description="Preview/apply safe repository hardening files.")
+    parser.add_argument("path", nargs="?", default=".")
+    if command == "fix":
+        parser.add_argument("--apply", action="store_true", help="create the proposed files; preview is the default")
+    return parser
+
+
 def main(argv: list[str] | None = None) -> int:
     actual_argv = list(sys.argv[1:] if argv is None else argv)
     if actual_argv and actual_argv[0] == "serve":
@@ -38,9 +48,31 @@ def main(argv: list[str] | None = None) -> int:
 
         serve_args = serve_parser().parse_args(actual_argv[1:])
         return serve(serve_args.host, serve_args.port, serve_args.open_browser)
+    if actual_argv and actual_argv[0] in {"fix", "pr"}:
+        from .fixes import apply_fixes, create_pull_request, propose_fixes, render_fix_plan
+
+        command = actual_argv[0]
+        fix_args = fix_parser(command).parse_args(actual_argv[1:])
+        root = Path(fix_args.path).resolve()
+        if not root.is_dir():
+            print(f"repotruth: not a directory: {root}", file=sys.stderr)
+            return 2
+        try:
+            if command == "pr":
+                print(create_pull_request(root))
+                return 0
+            proposals = propose_fixes(root)
+            print(render_fix_plan(root, proposals))
+            if fix_args.apply:
+                created = apply_fixes(root, proposals)
+                print(f"\nCreated {len(created)} file(s). Review them before committing.")
+            return 0
+        except (OSError, RuntimeError) as exc:
+            print(f"repotruth: {exc}", file=sys.stderr)
+            return 2
     args = build_parser().parse_args(actual_argv)
     try:
-        result = scan_repository(args.path, args.config)
+        result = scan_repository(args.path, args.config, verify=args.verify_runtime, online=args.online)
     except ValueError as exc:
         print(f"repotruth: {exc}", file=sys.stderr)
         return 2

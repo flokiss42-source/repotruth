@@ -1,5 +1,5 @@
 name: RepoTruth
-description: Verify README claims against evidence in the repository
+description: Audit repository security risks and verify claims against evidence
 branding:
   icon: check-circle
   color: green

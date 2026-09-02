@@ -4,13 +4,13 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-62f5bd)](https://www.python.org/)
 [![MIT](https://img.shields.io/badge/license-MIT-62f5bd)](LICENSE)
 
-**Does the code actually do what the README promises?**
+**Know what unfamiliar code does before you trust or run it.**
 
-RepoTruth is an evidence-first static analyzer for GitHub repositories. It catches broken setup commands, missing files, unimplemented code, and bold claims that have no visible evidence in the repository.
+RepoTruth is an explainable security and evidence auditor for GitHub repositories. It catches exposed credentials, risky code execution, unsafe deserialization, suspicious install scripts, dependency drift, known vulnerable packages, broken setup commands, and bold claims that have no visible evidence.
 
-It is designed for maintainers reviewing fast-moving and AI-generated projects. RepoTruth treats every scanned file as untrusted data and never executes commands from the target repository.
+It is designed for maintainers, buyers, and developers reviewing unfamiliar or AI-generated projects. Static scanning never executes target code. Optional runtime verification is explicit and runs only inside a locked-down offline Docker container.
 
-![RepoTruth browser interface](docs/web-ui.png)
+![RepoTruth browser interface](docs/web-ui-v04.png)
 
 <details>
 <summary>Example evidence report</summary>
@@ -21,7 +21,7 @@ It is designed for maintainers reviewing fast-moving and AI-generated projects. 
 
 ## Browser interface
 
-On Windows, double-click `start-repotruth.bat`. The local interface opens in your browser. Paste a public GitHub URL or switch to **Local folder**, enter a path, and press **Scan repository**.
+On Windows, double-click `start-repotruth.bat`. The local interface opens in your browser. Paste a public GitHub URL or switch to **Local folder**, enter a path, and press **Scan repository**. The OSV option checks pinned package versions against the public vulnerability database. The Docker option is separate and never silently runs code.
 
 On any platform:
 
@@ -29,7 +29,7 @@ On any platform:
 python -m repotruth serve --open
 ```
 
-The web server listens on `127.0.0.1:8765` only. Remote scans accept public `https://github.com/owner/project` URLs, enforce time and size limits, and never execute downloaded repository code.
+The web server listens on `127.0.0.1:8765` only. Remote scans accept public `https://github.com/owner/project` URLs and enforce time and size limits.
 
 ## What it detects
 
@@ -46,6 +46,19 @@ The web server listens on `127.0.0.1:8765` only. Remote scans accept public `htt
 | `RT008` | TODO, FIXME, or `NotImplementedError` in implementation code |
 | `RT009` | An explicit Evidence Contract lost its required files |
 | `RT010` | RepoTruth configuration is invalid |
+| `RT100` | Credential or private key appears committed (evidence is redacted) |
+| `RT110` | Dynamic code execution such as `eval` or `exec` |
+| `RT111` | Potentially unsafe deserialization |
+| `RT112` | Shell execution or `shell=True` |
+| `RT113` | TLS certificate verification disabled |
+| `RT120` | npm lifecycle code runs automatically during installation |
+| `RT121` | Floating or non-registry JavaScript dependency |
+| `RT122` | JavaScript dependency lockfile is missing |
+| `RT123` | Python dependency is not exactly pinned |
+| `RT130` | Large high-entropy encoded payload in source |
+| `RT140` | Pinned dependency matches a known OSV advisory |
+| `RT200` | Test/build command failed in the Docker sandbox |
+| `RT201` | Sandbox verification timed out |
 
 ## Evidence Contracts
 
@@ -109,7 +122,27 @@ repotruth . --format json
 repotruth . --format sarif --output repotruth.sarif
 repotruth . --format html --output report.html
 repotruth . --format github
+repotruth . --online
+repotruth . --verify-runtime
 ```
+
+`--online` sends pinned package names and versions to the public OSV.dev API. `--verify-runtime` requires Docker and an already downloaded `python:3.13-alpine` or `node:22-alpine` image. The container has no network, mounts the repository read-only, uses a non-root user, and has CPU, memory, PID, time, and temporary-storage limits.
+
+## Safe fixes and pull requests
+
+Preview new security scaffolding without changing anything:
+
+```bash
+repotruth fix .
+```
+
+Create only the proposed files, then review them:
+
+```bash
+repotruth fix . --apply
+```
+
+For a repository you control, `repotruth pr .` requires a clean worktree, creates a dedicated branch, commits only the generated files, pushes it, and asks GitHub CLI to open a pull request. This command changes Git and GitHub state, so it runs only when invoked explicitly.
 
 Exit code `1` is returned when a finding meets `--fail-on`. The default threshold is `high`.
 
@@ -139,10 +172,12 @@ The score is intentionally explainable. High, medium, low, and informational fin
 
 ## Safety and limitations
 
-- Target code and README commands are never executed.
+- Static scans never execute target code or README commands.
+- Runtime verification is opt-in and refuses to fall back to execution on the host.
+- OSV checks are opt-in in the CLI and disclose exactly what metadata leaves the computer.
 - HTML output escapes repository-controlled text.
 - Rules favor evidence over probabilistic AI judgments.
-- Static analysis can produce false positives and cannot prove correctness.
+- Static analysis and vulnerability databases can produce false positives and cannot prove correctness or safety.
 - Scan untrusted repositories in an isolated environment anyway; other developer tools may execute hooks or extensions.
 
 See [Security policy](SECURITY.md) and [contribution guide](CONTRIBUTING.md).

@@ -42,7 +42,7 @@ def github_clone_url(value: str) -> str:
 
 def github_repository_size(clone_url: str) -> int | None:
     slug = urlparse(clone_url).path.strip("/").removesuffix(".git")
-    request = Request(f"https://api.github.com/repos/{slug}", headers={"Accept": "application/vnd.github+json", "User-Agent": "RepoTruth/0.3"})
+    request = Request(f"https://api.github.com/repos/{slug}", headers={"Accept": "application/vnd.github+json", "User-Agent": "RepoTruth/0.4"})
     try:
         with urlopen(request, timeout=10) as response:
             payload = json.loads(response.read(MAX_REQUEST_BYTES))
@@ -66,7 +66,7 @@ def validate_repository_size(root: Path) -> None:
             raise ScanError("Repository is too large for the local quick scan.")
 
 
-def scan_github(value: str) -> dict:
+def scan_github(value: str, verify: bool = False, online: bool = False) -> dict:
     clone_url = github_clone_url(value)
     advertised_size = github_repository_size(clone_url)
     if advertised_size is not None and advertised_size > MAX_REPOSITORY_BYTES:
@@ -89,21 +89,21 @@ def scan_github(value: str) -> dict:
             message = completed.stderr.strip().splitlines()[-1] if completed.stderr.strip() else "clone failed"
             raise ScanError(f"Could not download the public repository: {message}")
         validate_repository_size(destination)
-        result = scan_repository(destination).to_dict()
+        result = scan_repository(destination, verify=verify, online=online).to_dict()
         result["root"] = clone_url.removesuffix(".git")
         return result
 
 
-def scan_local(value: str) -> dict:
+def scan_local(value: str, verify: bool = False, online: bool = False) -> dict:
     root = Path(value).expanduser().resolve()
     if not root.is_dir():
         raise ScanError("The local folder does not exist or is not a directory.")
     validate_repository_size(root)
-    return scan_repository(root).to_dict()
+    return scan_repository(root, verify=verify, online=online).to_dict()
 
 
 class RepoTruthHandler(BaseHTTPRequestHandler):
-    server_version = "RepoTruth/0.3"
+    server_version = "RepoTruth/0.4"
 
     def log_message(self, format: str, *args) -> None:
         return
@@ -137,7 +137,7 @@ class RepoTruthHandler(BaseHTTPRequestHandler):
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
         }
         if self.path == "/api/health":
-            self._json({"ok": True, "version": "0.3.0"})
+            self._json({"ok": True, "version": "0.4.0"})
         elif self.path in routes:
             self._asset(*routes[self.path])
         else:
@@ -162,9 +162,11 @@ class RepoTruthHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             mode = payload.get("mode")
             value = str(payload.get("value", "")).strip()
+            verify = payload.get("verify") is True
+            online = payload.get("online") is True
             if not value:
                 raise ScanError("Enter a GitHub URL or local folder.")
-            result = scan_github(value) if mode == "github" else scan_local(value) if mode == "local" else None
+            result = scan_github(value, verify, online) if mode == "github" else scan_local(value, verify, online) if mode == "local" else None
             if result is None:
                 raise ScanError("Unknown scan mode.")
             self._json({"result": result})
